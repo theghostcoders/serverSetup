@@ -110,7 +110,7 @@ while getopts ":d:a:u:p:v:xh" opt; do
     ;;
     h|help)
       # Display usage message
-      echo "$YELLOW Usage: setup.sh [-d PATH] [-a IP] [-p PORT] [-v] [-x] [-h]"
+      echo "$YELLOW Usage: setup.sh [-d PATH] [-a IP] [-u USER] [-p PORT] [-v] [-x] [-h]"
       echo "    -d PATH:"
       echo "         Set the directory where the server will be installed"
       echo "    -a IP:"
@@ -257,6 +257,9 @@ cd $SERVERPATH
 #TODO upload ALL FILES in VPS
 #for now we'll use anonfiles (and I test in my home webserver)
 
+#TODO upload client to zip then extract to serve in webserver
+#TODO create webserver
+
 rm -f server.zip
 
 wget --no-check-certificate $SERVERZIPURL -O server.zip --show-progress
@@ -290,6 +293,7 @@ sed -i "s/YOUR_DB_USER_HERE/$DBUSER/g" GatewayServer/setup.ini
 
 # Change start directory
 sed -i "s,/root/GF,$SERVERPATH,g" start
+sed -i "s,/root/GF,$SERVERPATH,g" restart
 
 
 # =============== 2. Patch ===============
@@ -400,10 +404,10 @@ output_message "success" "Done! user: $DBUSER passwd: $DBPASS"
 echo "$GREEN Data saved at /root/dbinfo"
 
 
-# =============== 3. Config DB ===============
-echo "$INFO========================= 3. Config DB =========================$NC"
+# =============== 4. Config DB ===============
+echo "$INFO========================= 4. Config DB =========================$NC"
 
-echo "$MISC [3.1] Creating databases.$NC"
+echo "$MISC [4.1] Creating databases.$NC"
 
 #sudo -u postgres psql -c "create database \"SpiritKingAccount\" encoding 'UTF8' template template0;"
 #sudo -u postgres psql -c "create database \"ElfDB\" encoding 'UTF8' template template0;"
@@ -413,11 +417,15 @@ sed -i "s/YOUR_IP_HERE/$IP" $SERVERPATH/SQL/GF_LS.sql
 sed -i "s/YOUR_IP_HERE/$IP" $SERVERPATH/SQL/GF_GS.sql
 
 # New SQL Files
-sudo -u postgres psql -c "create database \"GF_GS\" encoding 'UTF8' template template0;"
-sudo -u postgres psql -c "create database \"GF_LS\" encoding 'UTF8' template template0;"
-sudo -u postgres psql -c "create database \"GF_MS\" encoding 'UTF8' template template0;"
+#sudo -u postgres psql -c "create database \"GF_GS\" encoding 'UTF8' template template0;"
+#sudo -u postgres psql -c "create database \"GF_LS\" encoding 'UTF8' template template0;"
+#sudo -u postgres psql -c "create database \"GF_MS\" encoding 'UTF8' template template0;"
+sudo -u postgres psql -c "create database \"GF_GS\" encoding 'LATIN1' template template0;"
+sudo -u postgres psql -c "create database \"GF_LS\" encoding 'LATIN1' template template0;"
+sudo -u postgres psql -c "create database \"GF_MS\" encoding 'LATIN1' template template0;"
 
-echo "$MISC [3.2] Importing tables.$NC"
+
+echo "$MISC [4.2] Importing tables.$NC"
 
 sudo -u postgres psql -d GF_GS -c "\i '$SERVERPATH/SQL/GF_GS.sql';"
 sudo -u postgres psql -d GF_LS -c "\i '$SERVERPATH/SQL/GF_LS.sql';"
@@ -525,7 +533,7 @@ sudo ufw allow 5567/TCP       #  AK PORT 1
 sudo ufw allow 5568/TCP       #  AK PORT 2
 sudo ufw allow 10021/TCP      #  ZONE SERVER
 sudo ufw allow 10022/TCP      #  ZONE SERVER
-sudo ufw allow ssh            #  	SSH
+sudo ufw allow ssh            #  SSH
 sudo ufw enable
 sudo ufw status numbered
 
