@@ -3,26 +3,32 @@
 # ----------------------------------------------------------------------
 # - Grand Fantasia Server Setup Installer                              -
 # ----------------------------------------------------------------------
-# - ver 1.1
-# - added option to change db user 
-# ---
-# - ver 1.0
-# - first release
-# - read the readme.org file for more info
-# - coders: GaRocK
+# - ver 1.2
+# - Now we have a changelog.
+
+export LC_ALL=C
 
 # Control vars
 SERVERPATH="/root/gfonline"
-IP=""            # format 0.0.0.0
-PORT=6543        # client and LoginServer port
-DBUSER="postgre" # default but not recomended
-DBPASS=""        # if not set will generate a 32 char password
-PSQLVER=""       # must match the /etc/postgre folder
-REBOOT=0         # DO NOT CHANGE THIS MANUALLY
-EXPERT_MODE=0    # DO NOT CHANGE THIS MANUALLY
+IP=""               # format 0.0.0.0
+PORT=6543           # Client and LoginServer port
+DBUSER="postgres"   # default but not recomended
+DBPASS=""           # if not set will generate a 32 char password
+PSQLVER=""          # must match the /etc/postgre folder
 
-# Vars for File Checksum DON'T CHANGE THIS
-# checksums are using SHA1 algorithm
+# Control vars that you must not change
+VPS_MODE=0          # (0 = off, 1 = on) USE FLAG -v instead!
+REBOOT=0            # DO NOT CHANGE THIS MANUALLY
+EXPERT_MODE=0       # DO NOT CHANGE THIS MANUALLY
+
+# Offset address for patching DON'T CHANGE THIS
+ZONE_OFFSET=822D47  # DO NOT CHANGE THIS MANUALLY
+WORLD_OFFSET=3EA7A7 # DO NOT CHANGE THIS MANUALLY
+
+# Server.zip URL
+SERVERZIPURL="http://192.168.1.140/downloads/gf/server.zip"
+
+# File SHA1 Checksum DON'T CHANGE THIS
 SERVERCHECKSUM="4298dccdcb1f951b806e53498ac0df76ca36dd44"
 
 # Colors
@@ -63,8 +69,26 @@ if [ "$EUID" -ne 0 ]
   exit
 fi
 
+# Check for internet connection and if server files are available
+ping -c 1 google.com
+if [ $? -eq 0 ]; then
+  output_message "success" "You have internet connection"
+  wget --spider $SERVERZIPURL
+  if [ $? -eq 0 ]; then
+    output_message "success" "server.zip is available"
+  else
+    output_message "error" "Server Files are not available at $SERVERZIPURL"
+    echo "$ERROR Exiting...$NC"
+    exit
+  fi
+else
+  output_message "error" "You have no internet connection. Exiting..."
+  exit
+fi
+
+
 # Read arguments and set default values for SERVERPATH, IP, and PORT
-while getopts ":d:a:u:p:xh" opt; do
+while getopts ":d:a:u:p:v:xh" opt; do
   case $opt in
     d|dir)
       SERVERPATH=$OPTARG
@@ -81,9 +105,12 @@ while getopts ":d:a:u:p:xh" opt; do
     x|expert-mode)
       EXPERT_MODE=1
     ;;
+    v|vps-mode)
+      VPS_MODE=1
+    ;;
     h|help)
       # Display usage message
-      echo "$YELLOW Usage: setup.sh [-d PATH] [-a IP] [-p PORT] [-x] [-h]"
+      echo "$YELLOW Usage: setup.sh [-d PATH] [-a IP] [-p PORT] [-v] [-x] [-h]"
       echo "    -d PATH:"
       echo "         Set the directory where the server will be installed"
       echo "    -a IP:"
@@ -92,6 +119,8 @@ while getopts ":d:a:u:p:xh" opt; do
       echo "         Set the username for the database"
       echo "    -p PORT: (EXPERIMENTAL/ADVANCED USERS ONLY)"
       echo "         Set the PORT where the Gateway Server will be listening"
+      echo "    -v:"
+      echo "         Set the VPS Mode to ON and get your external IP automatically"
       echo "    -x:"
       echo "         unlock manual config for ports of the server, this mode is"
       echo "         ONLY RECOMENDED FOR ADVANCED USERS and WILL REQUIRE further DB configuration!"
@@ -114,28 +143,83 @@ done
 # =============== 0. Pre Config ===============
 echo "$INFO========================= 0. Pre Config =========================$NC"
 
+output_message "misc" "[0.0] Updating System and installing dependencies..."
+
 # Update apt and install packages and dependencies
 apt update && apt upgrade -y
 
 apt install -y sudo psmisc wget unzip postgresql pwgen ufw
 
+
+output_message "misc" "[0.1] Preparing directories"
+
+# Check if SERVERPATH is set to / and exits if it is!
+
+if [ "$SERVERPATH" == "/" ]; then
+  # Display error message and exit
+  output_message "error" " Invalid value for SERVERPATH: $SERVERPATH$NC"
+  echo "SERVERPATH cannot be set to /"
+  exit
+fi
+
+# Create directory if doesn't exists warning the user if exists
+
+if [ -d $SERVERPATH ]; then
+  output_message "Warning" "$SERVERPATH exists!"
+  output_message "warning" "Running this script can potentially harm or damage your existing server "
+  echo "$WARNING configuration and data if it exists AND/OR if is already setup and running. $NC"
+  echo "$WARNING Do you want to continue running this script? (y/n)$NC"
+  read OPVAR
+  
+  if [ "$OPVAR" != "y" ] && [ "$OPVAR" != "Y" ] ; then
+    output_message "misc" "You choose to quit, exiting!"
+    exit
+  fi
+else
+  # Finally creates the directory
+  mkdir $SERVERPATH -m 777
+fi
+
+
+# Handle if couldn't create directory
+if [ ! -d $SERVERPATH ]; then
+  output_message "error" "FATAL ERROR: Couldn't create $SERVERPATH directory, check your permissions and try again!"
+  exit
+fi
+
+output_message "misc" "[0.2] Setting initial variables."
+
 # Get PostgreeSQL version to use as the main postgree directory
 # as /etc/postgreesql/$PSQLVER/main
 if [ "$PSQLVER" == "" ]; then
   PSQLVER=$(psql --version | cut -c 19-20)
-#  PSQLVER=$(psql --version | awk '{print $3}' | cut -d . -f 1-2)
+#  PSQLVER=$(psql --version | awk '{print $3}' | cut -d . -f 1-2) # This gets the full name, not recomended
 fi
 
-# Set DB password if none is previously manually set
+# Set DB password if none is previously manually set (48 characters)
 if [ "$DBPASS" == "" ]; then
   DBPASS=$(pwgen -s 48 1)
 fi
 
+# If it is in a vps, try to get external IP
+if [ $VPS_MODE == 1 ]; then
+  output_message "info" "You are using a VPS, your IP will be autoset, check if it is right!"
+  IP="$(dig +short myip.opendns.com @resolver1.opendns.com)"
+  if [ "$IP" != "" ]; then
+    output_message "info" "Your server IP is set to your WAN IP: $IP by flag [-v]"
+  else
+    output_message "error" "Couldn't get your WAN IP, you will be prompted to insert it manually"
+  fi
+fi
+
+output_message "misc" "[0.3] Gathering IP information."
+
 # Set IP if not set by argument or manually in the control vars
 if [ "$IP" == "" ]; then
-  # Try to automatically get IP (excluding 127.0.0.1)
-  IP=$(ip a | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -Eo '([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1' | uniq )
-
+  # Try to automatically get IP (excluding 127.0.0.1) if not in VPS mode
+  if [ $VPS_MODE == 0 ]; then
+    IP=$(ip a | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -Eo '([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1' | uniq )
+  fi
   # Count the valid obtained IPs
   IPCOUNT=$( echo "$IP" | wc -l )  
   
@@ -160,128 +244,13 @@ if [ "$IP" == "" ]; then
     echo "$NC"
   fi
 else
-  output_message "info" "Your server IP was set to: $IP by flag [-a]."  
-fi
-
-
-# Check if SERVERPATH is set to / and exits if it is!
-
-if [ "$SERVERPATH" == "/" ]; then
-  # Display error message and exit
-  output_message "error" " Invalid value for SERVERPATH: $SERVERPATH$NC"
-  echo "SERVERPATH cannot be set to /"
-  exit
-fi
-
-# Create directory if doesn't exists warning the user if exists
-
-if [ -d $SERVERPATH ]; then
-  output_message "Warning" "$SERVERPATH exists!"
-  #echo "$WARNING [Warning] $SERVERPATH exists!$NC"
-  output_message "warning" "Running this script can potentially harm or damage your existing server "
-  echo "$WARNING configuration and data if it exists AND/OR if is already setup and running. $NC"
-  echo "$WARNING Do you want to continue running this script? (y/n)$NC"
-  read OPVAR
-  
-  if [ "$OPVAR" != "y" ] && [ "$OPVAR" != "Y" ] ; then
-    output_message "misc" "You choose to quit, exiting!"
-    exit
+  if [ $VPS_MODE == 0 ]; then
+    output_message "info" "Your server IP was set to: $IP by flag [-a]."  
   fi
-else
-  # Finally creates the directory
-  mkdir $SERVERPATH -m 777
 fi
 
-
-
-# Handle if couldn't create directory
-
-if [ ! -d $SERVERPATH ]; then
-  output_message "error" "FATAL ERROR: Couldn't create $SERVERPATH directory, check your permissions and try again!"
-  exit
-fi
-
-# =============== 1. Config OS ===============
-echo "$INFO========================= 1. Config OS =========================$NC"
-
-echo "$MISC 1.1 Pre configure postgres$NC"
-# --- Pre config postgres
-# Enter postgres dir and change the mode for listening everyone
-cd /etc/postgresql/$PSQLVER/main
-sed -i "s/#listen_addresses = 'localhost'/listen_adresses = '*'/g" postgresql.conf
-
-#TODO Remember to check if ipv6 is needed for this setup!
-# Change pg_hba configuration for host to accept connections
-sed -i "s,host    all             all             127.0.0.1/32            md5,host    all             all             0.0.0.0/0               md5,g" pg_hba.conf
-
-sed -i "s,peer,trust,g" pg_hba.conf
-
-
-#cat <<EOF > /etc/postgresql/$PSQLVER/main/pg_hba.conf
-# TYPE  DATABASE        USER            ADDRESS                 METHOD
-
-# "local" is for Unix domain socket connections only
-#local   all             postgres                                peer
-#local   all             all                                     peer
-# IPv4 local connections:
-#host    all             all             127.0.0.1/32            md5
-# IPv4  external connections:
-#host    all             all             0.0.0.0/0               md5
-# IPv6 local connections:
-#host    all             all             ::1/128                 md5
-# replications
-#local   replication     all                                     peer
-#host    replication     all             127.0.0.1/32            md5
-#host    replication     all             ::1/128                 md5
-#EOF
-
-# Restart postgres so changes take effect
-systemctl restart postgresql
-
-# Wait for 5 seconds so database will be on
-sleep 5
-
-# Create superuser $DBUSER with $DBPASS
-sudo -u postgres createuser -s $DBUSER
-sudo -u postgres psql -c "ALTER user $DBUSER WITH password '$DBPASS';"
-
-# Set password in postgres #123 for testing only!
-sudo -u postgres psql -c "ALTER user postgres WITH password '123';"
-
-echo "$DBUSER" > /root/dbinfo
-echo "$DBPASS" >> /root/dbinfo
-
-output_message "success" "Done! user: $DBUSER passwd: $DBPASS"
-
-echo "$GREEN Data saved at /root/dbinfo"
-
-echo "$MISC 1.2 Preparing IP for hexpatch$NC"
-
-# Prepare IP for hexpatch (convert it to hex as a mask)
-# Mask will look like 192.168.0.10 in hexadecimal (2 precision)
-# or \xc0\xa8\x00\x0a to be more exact (C0 A8 00 0A, individually convert as 192 168 0 10)
-#HEXEDIP=$printf '\\x%02x\\x%02x\\x%02x\n' $(echo "IP" | grep -o [0-9]* | head -n1) $(echo "IP" | grep -o [0-9]* | head -n2 | tail -n1) $(echo "$IP" | grep -o [0-9]* | head -n3 | tail -n1)
-HEXEDIP=$(printf '\\x%02x\\x%02x\\x%02x\\x%02x\n' $(echo "$IP" | grep -o [0-9]* ))
-
-output_message "success" "Done! IP(hex): $HEXEDIP"
-
-# --- OS syscalls
-
-echo "$MISC 1.3 Preparing OS Syscalls$NC"
-#Enable vsyscall in emulate
-if [ "$(cat /proc/cmdline | grep vsyscall=emulate)" == "" ]; then
-  sed -i "s/GRUB_CMDLINE_LINUX_DEFAULT=\"/GRUB_CMDLINE_LINUX_DEFAULT=\"vsyscall=emulate /g" "/etc/default/grub"
-  sudo update-grub
-  REBOOT=1
-  output_message "success" "Done! vsyscall is in emulate mode"
-else
-  output_message "success" "Done! vsyscall was already in emulate mode"
-  REBOOT=0
-fi
-
-
-# =============== 2. Download ===============
-echo "$SUCCESS========================= 2. Download =========================$NC"
+# =============== 1. Download ===============
+echo "$SUCCESS========================= 1. Download =========================$NC"
 
 cd $SERVERPATH
 
@@ -290,7 +259,7 @@ cd $SERVERPATH
 
 rm -f server.zip
 
-wget --no-check-certificate http://192.168.1.140/downloads/gf/server.zip -O server.zip --show-progress
+wget --no-check-certificate $SERVERZIPURL -O server.zip --show-progress
 
 if [ ! -f server.zip ]; then
   output_message "error" "server.zip couldn't be downloaded or couldn't be found!"
@@ -314,80 +283,161 @@ rm -r server.zip
 #cd server
 
 # Set password in ini configurations files
-# old was antiroot
 sed -i "s/YOUR_DB_PASS_HERE/$DBPASS/g" setup.ini
 sed -i "s/YOUR_DB_USER_HERE/$DBUSER/g" setup.ini
 sed -i "s/YOUR_DB_PASS_HERE/$DBPASS/g" GatewayServer/setup.ini
 sed -i "s/YOUR_DB_USER_HERE/$DBUSER/g" GatewayServer/setup.ini
 
-# Change start directories
-# old default: ~/GF/006.058.64.64/
-# stop has no dir
+# Change start directory
 sed -i "s,/root/GF,$SERVERPATH,g" start
 
-# debug purposes CODE STOPS HERE! ------------------------------------- ------------------------------------------------------------------------
-#exit
 
-# =============== 3. Config DB ===============
-echo "$INFO========================= 3. Config DB =========================$NC"
+# =============== 2. Patch ===============
+echo "$YELLOW========================= 2. Patch =========================$NC"
+
+echo "$MISC [2.1] Preparing IP for hexpatch$NC"
+
+# This part is adapted from BUKK's project since it works better than the old method
+
+# Split ip into parts using separator as . (dot), zeroing last char, this will transform
+# 192.168.1.20 in 192.168.1.0
+IPSPLIT=(${IP//./ })
+IPSPLIT[3]=0
+IPSTR="${IPSPLIT[0]}.${IPSPLIT[1]}.${IPSPLIT[2]}.${IPSPLIT[3]}"
+
+HEXEDIP=""
+
+# Transform the IPSTR into 
+for char in $(echo "$IPSTR" | grep -o .); do
+    HEXEDIP+=$(printf '%02x' "'$char")
+done
+
+HEXEDIP+="000000"   # fill tail with zeros
+
+# Here we end the copy/paste
+
+output_message "success" "Done! IP(hex): $HEXEDIP"
+
+# Patching the Server!
+#sed -i "s,\xc3\x3c\xd0\x00,$HEXEDIP,g" "WorldServer/WorldServer"
+#sed -i "s,\xc3\x3c\xd0\x00,$HEXEDIP,g" "ZoneServer/ZoneServer"
+
+output_message "misc" "[2.2] Patching server binaries"
+
+IPBYTES=$(echo $HEXEDIP | sed 's/(..)/\\x\1/g')
+
+cp "WorldServer/WorldServer" "WorldServer/WorldServer.bak"
+
+echo -en $IPBYTES | dd of=WorldServer/WorldServer bs=1 seek=$((0x$WORLD_OFFSET)) count=${#IPBYTES} conv=notrunc # >/dev/null 2>&1
+
+cp "ZoneServer/ZoneServer" "ZoneServer/ZoneServer.bak"
+
+echo -en $IPBYTES | dd of=ZoneServer/ZoneServer bs=1 seek=$((0x$ZONE_OFFSET)) count=${#IPBYTES} conv=notrunc # >/dev/null 2>&1
+
+output_message "success" "Server patched successfully"
+
+
+# =============== 3. Config OS ===============
+echo "$INFO========================= 3. Config OS =========================$NC"
+
+# --- OS syscalls
+
+echo "$MISC [3.1] Preparing OS Syscalls$NC"
+
+#Enable vsyscall in emulate
+if [ "$(cat /proc/cmdline | grep vsyscall=emulate)" == "" ]; then
+  sed -i "s/GRUB_CMDLINE_LINUX_DEFAULT=\"/GRUB_CMDLINE_LINUX_DEFAULT=\"vsyscall=emulate /g" "/etc/default/grub"
+  sudo update-grub
+  REBOOT=1
+  output_message "success" "Done! vsyscall is in emulate mode"
+else
+  output_message "success" "Done! vsyscall was already in emulate mode"
+  REBOOT=0
+fi
+
+
+echo "$MISC [3.2] Pre configure postgres$NC"
+# --- Pre config postgres
+# Enter postgres dir and change the mode for listening everyone
+cd /etc/postgresql/$PSQLVER/main
+
+# Change postgresql to accept connections from outside
+sed -i "s/#listen_addresses = 'localhost'/listen_adresses = '*'/g" postgresql.conf
+
+# Change pg_hba configuration for host to accept md5 connections
+sed -i "s,local   all             postgres                                peer,local   all             postgres                                md5,g" pg_hba.conf
+sed -i "s,local   all             all                                     peer,local   all             all                                     md5,g" pg_hba.conf
+sed -i "s,host    all             all             127.0.0.1/32            md5,host    all             all             0.0.0.0/0               md5,g" pg_hba.conf
+
+# Restart cluster
+pg_ctlcluster 13 main stop
+pg_ctlcluster 13 main start
+
+# Restart postgres so changes take effect
+systemctl restart postgresql
+
+# Wait for 5 seconds so database will be on
+sleep 5
 
 # Temporarly set permissions so postgree can act!
 chmod 777 /root -R
 
-systemctl restart postgresql
-sudo -u postgres psql -c "create database \"SpiritKingAccount\" encoding 'UTF8' template template0;"
-sudo -u postgres psql -c "create database \"ElfDB\" encoding 'UTF8' template template0;"
+# Create superuser $DBUSER with $DBPASS if is not postgres
+if [ "$DBUSER" != "postgres" ]; then  
+  sudo -u postgres createuser -s $DBUSER
+  sudo -u postgres psql -c "ALTER user $DBUSER WITH password '$DBPASS';"
+else
+  # Set password in postgres as DBPASS
+  sudo -u postgres psql -c "ALTER user postgres WITH password '$DBPASS';"
+fi
 
-# We'll create the useles ak dbs for debug purposes
-sudo -u postgres psql -c "create database \"FFAccount\" encoding 'UTF8' template template0;"
-sudo -u postgres psql -c "create database \"FFMember\" encoding 'UTF8' template template0;"
-sudo -u postgres psql -c "create database \"FFDB1\" encoding 'UTF8' template template0;"
-sudo -u postgres psql -c "create database \"FFDB\" encoding 'UTF8' template template0;"
+# Save credentials to file
+echo "$DBUSER" > /root/dbinfo
+echo "$DBPASS" >> /root/dbinfo
 
-# New Files
-sudo -u postgres psql -c "create database \"accounts\" encoding 'UTF8' template template0;"
+output_message "success" "Done! user: $DBUSER passwd: $DBPASS"
 
+echo "$GREEN Data saved at /root/dbinfo"
+
+
+# =============== 3. Config DB ===============
+echo "$INFO========================= 3. Config DB =========================$NC"
+
+echo "$MISC [3.1] Creating databases.$NC"
+
+#sudo -u postgres psql -c "create database \"SpiritKingAccount\" encoding 'UTF8' template template0;"
+#sudo -u postgres psql -c "create database \"ElfDB\" encoding 'UTF8' template template0;"
+
+# Set the proper IP on databases
+sed -i "s/YOUR_IP_HERE/$IP" $SERVERPATH/SQL/GF_LS.sql
+sed -i "s/YOUR_IP_HERE/$IP" $SERVERPATH/SQL/GF_GS.sql
+
+# New SQL Files
 sudo -u postgres psql -c "create database \"GF_GS\" encoding 'UTF8' template template0;"
-
 sudo -u postgres psql -c "create database \"GF_LS\" encoding 'UTF8' template template0;"
-
 sudo -u postgres psql -c "create database \"GF_MS\" encoding 'UTF8' template template0;"
 
-sudo -u postgres psql -c "create database \"item_receipt\" encoding 'UTF8' template template0;"
-
-sudo -u postgres psql -c "create database \"item_receivable\" encoding 'UTF8' template template0;"
+echo "$MISC [3.2] Importing tables.$NC"
 
 sudo -u postgres psql -d GF_GS -c "\i '$SERVERPATH/SQL/GF_GS.sql';"
 sudo -u postgres psql -d GF_LS -c "\i '$SERVERPATH/SQL/GF_LS.sql';"
 sudo -u postgres psql -d GF_MS -c "\i '$SERVERPATH/SQL/GF_MS.sql';"
-sudo -u postgres psql -d accounts -c "\i '$SERVERPATH/SQL/accounts.sql';"
-sudo -u postgres psql -d item_receipt -c "\i '$SERVERPATH/SQL/item_receipt.sql';"
-sudo -u postgres psql -d item_receivable -c "\i '$SERVERPATH/SQL/item_receivable.sql';"
+sudo -u postgres psql -d GF_LS -c "\i '$SERVERPATH/SQL/accounts.sql';"
+sudo -u postgres psql -d GF_LS -c "\i '$SERVERPATH/SQL/item_receipt.sql';"
+sudo -u postgres psql -d GF_LS -c "\i '$SERVERPATH/SQL/item_receivable.sql';"
 
+#sudo -u postgres psql -d GF_LS -c "UPDATE worlds SET ip = '$IP' WHERE ip = 'YOUR_IP_HERE';"
+#sudo -u postgres psql -d GF_GS -c "UPDATE serverstatus SET ext_address = '$IP' WHERE ext_address = 'YOUR_IP_HERE';"
 
-sudo -u postgres psql -d FFAccount -c "\i '$SERVERPATH/SQL/FFAccount.sql';"
-sudo -u postgres psql -d FFMember -c "\i '$SERVERPATH/SQL/FFMember.sql';"
-sudo -u postgres psql -d FFDB1 -c "\i '$SERVERPATH/SQL/FFDB1.sql';"
-sudo -u postgres psql -d FFDB -c "\i '$SERVERPATH/SQL/FFDB.sql';"
-
-sudo -u postgres psql -d FFAccount -c "UPDATE worlds SET ip = '$IP' WHERE ip = 'YOUR_IP_HERE';"
-sudo -u postgres psql -d FFDB1 -c "UPDATE serverstatus SET ext_address = '$IP' WHERE ext_address = 'YOUR_IP_HERE';"
-
-
-# =============== 4. Patch ===============
-echo "$YELLOW========================= 4. Patch =========================$NC"
-# Patching the Server!
-sed -i "s,\xc3\x3c\xd0\x00,$HEXEDIP,g" "WorldServer/WorldServer"
-sed -i "s,\xc3\x3c\xd0\x00,$HEXEDIP,g" "ZoneServer/ZoneServer"
 
 # --- PORT VARS
 
 GATEWAYPORT=5560  # GATEWAY PORT
 HTTPPORT=7878     # HTTP SERVER PORT
-TICKETPORT=7777   #  TICKET SERVER PORT  #(server/TicketServer/Setup.ini)
-AHPORT=15306  #  AUCTION HOUSE PORT AHNETSERVER
-GMTOOLPORT=10320  #  GM TOOL PORT
-CGIPORT=20060     #  CGI PORT
+TICKETPORT=7777   # TICKET SERVER PORT  #(server/TicketServer/Setup.ini)
+AHPORT=15306      # AUCTION HOUSE PORT AHNETSERVER
+GMTOOLPORT=10320  # GM TOOL PORT
+CGIPORT=20060     # CGI PORT
 
 if [ $EXPERT_MODE == 1 ]; then
 
@@ -400,7 +450,7 @@ if [ $EXPERT_MODE == 1 ]; then
   echo "in a single VPS (if you are really willing to do that, you have a lot of stuff"
   echo " to do... Good Luck on the databases and extra configs)"
   echo "This method also can be a good way of evading ISP port denying (if you have"
-  echo "trouble with that)$NC"
+  echo "trouble with that while hosting your server at home)$NC"
   output_message "warning" "Please notice that this process is not automated and you WILL"
   output_message "warning" "HAVE TO manually config your databases for getting the desired"
   output_message "warning" "results! \nWhat do you want to do now?"
@@ -453,7 +503,7 @@ if [ $EXPERT_MODE == 1 ]; then
   fi
 fi
 
-# =============== 4/5. Firewall Config ===============
+# =============== Firewall Config ===============
 echo "$INFO========================= Firewall Config =========================$NC"
 
 # It's better to use the previous declared vars so we don't lose data
@@ -472,9 +522,10 @@ sudo ufw allow "$AHPORT"      #  AUCTION HOUSE PORT AHNETSERVER
 sudo ufw allow "$GMTOOLPORT"  #  GM TOOL PORT
 sudo ufw allow "$CGIPORT"     #  CGI PORT
 sudo ufw allow 5567/TCP       #  AK PORT 1
-sudo ufw allow 5568 /TCP      # AK PORT 2
+sudo ufw allow 5568/TCP       #  AK PORT 2
 sudo ufw allow 10021/TCP      #  ZONE SERVER
 sudo ufw allow 10022/TCP      #  ZONE SERVER
+sudo ufw allow ssh            #  	SSH
 sudo ufw enable
 sudo ufw status numbered
 
@@ -482,16 +533,20 @@ sudo ufw status numbered
 # Set Aliases for Start/Stop Server
 if [ "$(cat /root/.bashrc | grep startserver=)" != "" ]; then
   sed -i "/alias startserver=/d" /root/.bashrc
-  sed -i "/alias stopserver=/d" /root/.bashrc  
+  sed -i "/alias stopserver=/d" /root/.bashrc 
+  sed -i "/alias restartserver=/d" /root/.bashrc  
+  sed -i "/alias serverstats=/d" /root/.bashrc   
   output_message "success" "Old alias removed!"
 fi
 
 echo "alias startserver='$SERVERPATH/start'" >> /root/.bashrc
 echo "alias stopserver='$SERVERPATH/stop'" >> /root/.bashrc
+echo "alias restartserver='$SERVERPATH/restart'" >> /root/.bashrc
+echo "alias serverstats='$SERVERPATH/serverstats'" >> /root/.bashrc
 output_message "success" "Alias Created!"
 
 #revoke permissions
-chmod 640 /root -R 
+chmod 644 /root -R 
 
 chmod 777 $SERVERPATH
 echo "Entering $SERVERPATH"
@@ -510,18 +565,23 @@ echo "IP: $IP"
 echo "PostgreSQL version: $PSQLVER"
 echo "DB User: $DBUSER"
 echo "DB Pass: $DBPASS $NC"
-echo "$MISC Start server command: startserver"
-echo "Stop server command: stopserver$NC"
+echo "$MISC Server command aliases:"
+echo "startserver"
+echo "stopserver"
+echo "restartserver"
+echo "serverstats$NC"
 echo "$GREEN This information will be saved at root directory as /root/serverinfo!$NC"
 
-echo "[Server Information]" > /root/serverinfo
+echo "[Server Info]" > /root/serverinfo
 echo "IP: $IP" >> /root/serverinfo
 echo "PostgreSQL version: $PSQLVER" >> /root/serverinfo
 echo "DB User: $DBUSER" >> /root/serverinfo
 echo "DB Pass: $DBPASS" >> /root/serverinfo
-echo "Start and stop server commands bellow" >> /root/serverinfo
-echo "startserver" >> /root/serverinfo
-echo "stopserver" >> /root/serverinfo
+echo "Server aliases bellow" >> /root/serverinfo
+echo "startserver   : start your server" >> /root/serverinfo
+echo "stopserver    : stop your server" >> /root/serverinfo
+echo "restartserver : restart your server" >> /root/serverinfo
+echo "serverstats   : show your server stats" >> /root/serverinfo
 
 if [ $REBOOT == 1 ]; then
   output_message "warning" "Your server has to reboot for proper configuration."

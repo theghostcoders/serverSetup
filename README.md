@@ -2,6 +2,8 @@
 
 This script is used to set up a server and it accepts several command line arguments.
 
+**ALL ARGUMENTS ARE OPTIONAL...** But you can use them if you need or want.
+
 ## Permissions
 
 You have to give it permissions to run properly.
@@ -23,6 +25,7 @@ setup.sh [-d PATH] [-a IP] [-p PORT] [-x] [-h]
 - `-d PATH`: Set the directory where the server will be installed
 - `-a IP`: Set the IP of the server for configuration
 - `-u USER`: Set the username for the database
+- `-v`: Set the VPS Mode on. This will get your external IP automatically.
 - `-p PORT`: (EXPERIMENTAL/ADVANCED USERS ONLY) Set the PORT where the Gateway Server will be listening
 - `-x`: unlock manual config for ports of the server, this mode is ONLY RECOMENDED FOR ADVANCED USERS and WILL REQUIRE further DB configuration!
 - `-h`: Display this help message

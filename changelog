@@ -1,0 +1,33 @@
+# - coders: TheGhostCoders
+
+## v1.2 - 20-01-2023
+
+### New Features
+- Patch function now working properly. 
+  (Special thanks to BUKK)
+
+- Check if there's internet connection and if the file is available to download.
+
+### Bug Fixes
+- Fixed: Patcher now is patching the server binaries properly.
+
+### Other Changes
+- Minor code improvements
+- LC_ALL is here \m/
+- Server Zip URL is a variable to be used (SERVERZIPURL)
+- Reordered algorithm
+
+---
+
+## v1.1 - 12-01-2023
+
+### New Features
+- Added option to change database user.
+
+### Other Changes
+- Minor code optimization
+
+---
+
+## v1.0 - 08-01-2023
+- First Release
